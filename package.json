@@ -1,16 +1,13 @@
 {
   "name": "voidrush",
   "version": "1.0.0",
-  "description": "Void Rush - Browser-based dodge & survive arcade game",
+  "description": "Void Rush - Browser-based 2D arcade dodge game built with PixiJS and TypeScript",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "type-check": "tsc --noEmit",
-    "server": "node server/index.js",
-    "start": "npm run server"
+    "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "express": "^4.18.2",
     "pixi.js": "^7.4.2"
   },
   "devDependencies": {

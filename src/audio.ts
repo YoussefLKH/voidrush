@@ -1,3 +1,4 @@
+
 // ─── Audio Manager ────────────────────────────────────────────────────────────
 // MP3 files are loaded from /assets/audio/*.mp3
 // Falls back to Web Audio API synthesis if files are not ready.
@@ -11,7 +12,13 @@ class AudioManager {
   private musicSource: AudioBufferSourceNode | null = null;
   private musicGain:   GainNode              | null = null;
 
-  muted = false;
+  // Track currently requested music so we can restart it on unmute
+  private _currentTrack: string | null = null;
+  private _currentVol   = 0.45;
+  private _currentLoop  = true;
+
+  muted      = false;  // SFX mute
+  musicMuted = false;  // Music mute (independent of SFX)
 
   // ── Bootstrap ─────────────────────────────────────────────────────────────
   private getCtx(): AudioContext {
@@ -35,7 +42,8 @@ class AudioManager {
     const ctx = this.getCtx();
     await Promise.all(files.map(async (name) => {
       try {
-        const res = await fetch(`/assets/audio/${name}.mp3`);
+        const res = await fetch(`/audio/${name}.mp3`);
+
         if (!res.ok) return;
         const arr = await res.arrayBuffer();
         this.sfx.set(name, await ctx.decodeAudioData(arr));
@@ -60,8 +68,12 @@ class AudioManager {
   // ── Music system ──────────────────────────────────────────────────────────
   private playMusic(name: string, loop = true, vol = 0.45): void {
     const buf = this.sfx.get(name);
-    this.stopMusic();
-    if (!buf || this.muted) return;
+    // Remember what was requested so setMusicMuted(false) can restart it
+    this._currentTrack = name;
+    this._currentVol   = vol;
+    this._currentLoop  = loop;
+    this._stopMusicSource();
+    if (!buf || this.musicMuted) return;
     const ctx       = this.getCtx();
     this.musicGain  = ctx.createGain();
     this.musicGain.gain.value = vol;
@@ -73,10 +85,29 @@ class AudioManager {
     this.musicSource.start();
   }
 
-  stopMusic(): void {
+  /** Internal stop — keeps _currentTrack so unmuting can restart. */
+  private _stopMusicSource(): void {
     try { this.musicSource?.stop(); } catch {}
     this.musicSource = null;
     this.musicGain   = null;
+  }
+
+  /** Full stop — clears track memory (game changing state, not just muting). */
+  stopMusic(): void {
+    this._currentTrack = null;
+    this._stopMusicSource();
+  }
+
+  /** Toggle music mute. Stops or restarts the current track cleanly. */
+  setMusicMuted(v: boolean): void {
+    this.musicMuted = v;
+    if (v) {
+      this._stopMusicSource();
+    } else if (this._currentTrack) {
+      const t = this._currentTrack;
+      this._currentTrack = null;
+      this.playMusic(t, this._currentLoop, this._currentVol);
+    }
   }
 
   playBGM(): void            { this.playMusic('BGM',           true,  0.45); }

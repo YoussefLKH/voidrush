@@ -170,6 +170,26 @@ export class EffectsManager {
     this.screenFlash(0x00ddff, 0.14, 0.28);
   }
 
+  // ── Victory gold burst ───────────────────────────────────────────────────
+  victoryBurst(): void {
+    const W = this.app.screen.width, H = this.app.screen.height;
+    const cx = W / 2, cy = H / 2;
+    // 3 staggered waves of gold/white particles
+    for (let wave = 0; wave < 3; wave++) {
+      setTimeout(() => {
+        for (let i = 0; i < 28; i++) {
+          const a   = (i / 28) * Math.PI * 2 + Math.random() * 0.3;
+          const spd = 80 + Math.random() * 200;
+          const col = [0xffcc00, 0xffd700, 0xffffff, 0xffee88][Math.floor(Math.random() * 4)];
+          const sz  = 2 + Math.random() * 4;
+          const life = 0.6 + Math.random() * 0.7;
+          this.spawnParticle(cx, cy, Math.cos(a) * spd, Math.sin(a) * spd, col, sz, life);
+        }
+        this.screenFlash(0xffcc00, 0.12, 0.4);
+      }, wave * 220);
+    }
+  }
+
   // ── Charge trail (for Stampede boss) ─────────────────────────────────────
   spawnTrail(x: number, y: number, color: number): void {
     this.spawnParticle(x, y, (Math.random() - 0.5) * 40, (Math.random() - 0.5) * 40, color, 6 + Math.random() * 4, 0.3);

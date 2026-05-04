@@ -9,8 +9,10 @@ import { BossBase, BossStampede, createBoss } from './boss';
 import { BackgroundManager } from './background';
 import { audio }             from './audio';
 import { BOMB_BLAST_RADIUS } from './enemies';
+import { Tutorial }          from './tutorial';
+import { addWinner }         from './leaderboard';
 
-export type GameState = 'menu' | 'playing' | 'boss-intro' | 'dead' | 'paused' | 'victory';
+export type GameState = 'menu' | 'playing' | 'boss-intro' | 'dead' | 'paused' | 'victory' | 'tutorial';
 
 const LEVEL_DURATION       = 30;
 const MAX_LIVES            = 3;
@@ -251,6 +253,7 @@ export class Game {
   private menu:         Menu;
   private background:   BackgroundManager;
   private boss:         BossBase | null = null;
+  private tutorial:     Tutorial;
 
   // ── Pickups ────────────────────────────────────────────────────────────────
   private healthPickup:  HealthPickup | null = null;
@@ -309,8 +312,11 @@ export class Game {
     this.effects      = new EffectsManager(app, this.fxLayer);
     this.hud          = new HUD(app, this.uiLayer);
     this.menu         = new Menu(app, this.menuLayer);
+    this.tutorial     = new Tutorial(app);
+    app.stage.addChild(this.tutorial.root);  // sits above all game layers
 
-    this.menu.onStart = () => this.startGame();
+    this.menu.onStart    = () => this.startGame();
+    this.menu.onTutorial = () => this.startTutorial();
 
     this.playerLayer.visible = false;
     this.enemyLayer.visible  = false;
@@ -348,10 +354,12 @@ export class Game {
     this.state     = 'paused';
     this.hud.showPauseMenu(
       audio.muted,
+      audio.musicMuted,
       this.score,
       this.level,
       () => this.resumeGame(),
       () => { audio.muted = !audio.muted; this.hud.updatePauseSoundLabel(audio.muted); },
+      () => { audio.setMusicMuted(!audio.musicMuted); this.hud.updatePauseMusicLabel(audio.musicMuted); },
       () => this.quitToMenu(),
     );
   }
@@ -396,11 +404,14 @@ export class Game {
     this.scoreTimer     = 0;
     this.level          = 1;
     this.levelTimer     = 0;
-    this.lives          = 2;
+    this.lives          = 3;
     this.invincTimer    = 0;
     this.bossActive     = false;
     this.voidStormTimer = VOID_STORM_INTERVAL;
     this.boss           = null;
+    // Never carry mute state over from a previous session
+    audio.muted      = false;
+    audio.musicMuted = false;
     this.crateTimer     = SHIELD_SPAWN_MIN + Math.random() * (SHIELD_SPAWN_MAX - SHIELD_SPAWN_MIN);
 
     if (this.healthPickup) { this.healthPickup.destroy(); this.healthPickup = null; }
@@ -414,7 +425,7 @@ export class Game {
 
     this.hud.setScore(0);
     this.hud.setLevel(1);
-    this.hud.setLives(2);
+    this.hud.setLives(3);
     this.hud.hideGameOver();
     this.hud.hideBossBar();
     this.hud.showProgressBar();
@@ -433,6 +444,19 @@ export class Game {
     this.state = 'playing';
 
     audio.preloadAll().then(() => audio.playBGM());
+  }
+
+  // ── Tutorial ──────────────────────────────────────────────────────────────
+
+  private startTutorial(): void {
+    this.state = 'tutorial';
+    this.menu.hide();
+    this.tutorial.onComplete = () => {
+      this.tutorial.hide();
+      this.state = 'menu';
+      this.menu.show();
+    };
+    this.tutorial.show();
   }
 
   // ── Hit handling ──────────────────────────────────────────────────────────
@@ -592,6 +616,9 @@ export class Game {
     audio.levelUp();
 
     this.hud.showVictory(this.score);
+    this.effects.victoryBurst();
+
+    const savedScore = this.score;
 
     const doGoToMenu = () => {
       if (this.state !== 'victory') return;
@@ -610,19 +637,32 @@ export class Game {
       this.bulletLayer.visible = false;
       this.uiLayer.visible     = false;
       this.hud.hideVictory();
+      this.hud.hideNameEntry();
       this.menu.show();
       this.state = 'menu';
     };
 
-    // Auto-return after 10 s
-    this.victoryAutoTimer = setTimeout(doGoToMenu, 10000);
+    const setupAnyKey = () => {
+      if (this.state !== 'victory') return;
+      // Auto-return after 18s from name-entry shown
+      this.victoryAutoTimer = setTimeout(doGoToMenu, 18000);
+      // Any-key after 0.5s
+      setTimeout(() => {
+        if (this.state !== 'victory') return;
+        this.victoryKeyListener = () => doGoToMenu();
+        window.addEventListener('keydown', this.victoryKeyListener, { once: true });
+      }, 500);
+    };
 
-    // Any-key shortcut after 1 s
+    // Show name entry after 2.5s
     setTimeout(() => {
       if (this.state !== 'victory') return;
-      this.victoryKeyListener = () => doGoToMenu();
-      window.addEventListener('keydown', this.victoryKeyListener, { once: true });
-    }, 1000);
+      this.hud.showNameEntry(savedScore, (name) => {
+        if (name) addWinner(name, savedScore);
+        this.hud.hideNameEntry();
+        setupAnyKey();
+      });
+    }, 2500);
   }
 
   private collectHealthPickup(): void {
@@ -829,16 +869,18 @@ export class Game {
         ));
       }
 
-      // Void Storm
-      this.voidStormTimer -= dt;
-      if (this.voidStormTimer <= 0) {
-        this.voidStormTimer = VOID_STORM_INTERVAL;
-        const dirs = ['left', 'right', 'top', 'bottom'] as const;
-        const dir  = dirs[Math.floor(Math.random() * dirs.length)];
-        this.enemyManager.triggerVoidStorm(dir);
-        this.hud.showVoidStormWarning(dir);
-        this.effects.flashCrimson();
-        audio.voidStormWarning();
+      // Void Storm — only tick when enemies are active, never during boss fights
+      if (!this.enemyManager.isPaused() && !this.bossActive) {
+        this.voidStormTimer -= dt;
+        if (this.voidStormTimer <= 0) {
+          this.voidStormTimer = VOID_STORM_INTERVAL + (Math.random() - 0.5) * 10;
+          const dirs = ['left', 'right', 'top', 'bottom'] as const;
+          const dir  = dirs[Math.floor(Math.random() * dirs.length)];
+          this.enemyManager.triggerVoidStorm(dir);
+          this.hud.showVoidStormWarning(dir);
+          this.effects.flashCrimson();
+          audio.voidStormWarning();
+        }
       }
     }
 

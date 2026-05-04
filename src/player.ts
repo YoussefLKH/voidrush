@@ -91,14 +91,17 @@ export class Player {
   /** Angle (radians) the ship is currently facing. Default = up (-π/2). */
   public facingAngle = -Math.PI / 2;
 
-  private speed = 320;
-  private keys  = new Set<string>();
-  private time  = 0;
+  private speed      = 320;
+  private keys       = new Set<string>();
+  private time       = 0;
+  private trailTimer = 0;
+  private trailLayer: PIXI.Container;
 
   constructor(app: PIXI.Application, layer: PIXI.Container) {
-    this.app = app;
-    this.x   = app.screen.width  / 2;
-    this.y   = app.screen.height / 2;
+    this.app        = app;
+    this.trailLayer = layer;
+    this.x          = app.screen.width  / 2;
+    this.y          = app.screen.height / 2;
 
     this.container = new PIXI.Container();
     this.glowGfx   = new PIXI.Graphics();
@@ -146,6 +149,13 @@ export class Player {
       this.facingAngle = Math.atan2(dy, dx);
       // Visual rotation: atan2 gives right=0, but ship model points up → add π/2 offset
       this.container.rotation = this.facingAngle + Math.PI / 2;
+
+      // Engine trail
+      this.trailTimer -= dt;
+      if (this.trailTimer <= 0) {
+        this.trailTimer = 0.042;
+        this.spawnTrailDot();
+      }
     }
 
     // Clamp to screen
@@ -156,6 +166,31 @@ export class Player {
 
     // Pulse glow
     this.glowGfx.alpha = 0.75 + Math.sin(this.time * 4.5) * 0.25;
+  }
+
+  private spawnTrailDot(): void {
+    const color = SHIP_COLORS[settings.ship];
+    // Spawn behind the engine nozzle (back of ship, +10px along reverse facing)
+    const bx = this.x - Math.cos(this.facingAngle) * 10;
+    const by = this.y - Math.sin(this.facingAngle) * 10;
+    const g  = new PIXI.Graphics();
+    g.beginFill(color, 0.65); g.drawCircle(0, 0, 2.5 + Math.random() * 1.5); g.endFill();
+    g.position.set(bx, by);
+    this.trailLayer.addChild(g);
+    let life = 0;
+    const maxLife = 0.22;
+    const anim = (delta: number) => {
+      life += delta / 60;
+      const t = 1 - life / maxLife;
+      g.alpha   = t * 0.65;
+      g.scale.x = g.scale.y = t * 0.9 + 0.1;
+      if (life >= maxLife) {
+        if (g.parent) this.trailLayer.removeChild(g);
+        g.destroy();
+        this.app.ticker.remove(anim);
+      }
+    };
+    this.app.ticker.add(anim);
   }
 
   reset(): void {

@@ -2,8 +2,9 @@ import * as PIXI from 'pixi.js';
 import { settings, SHIP_NAMES, SHIP_COLORS, ShipVariant } from './settings';
 import { drawShipShape } from './player';
 import { audio } from './audio';
+import { getWinners } from './leaderboard';
 
-type Screen = 'main' | 'avatar' | 'instructions';
+type Screen = 'main' | 'avatar' | 'instructions' | 'leaderboard';
 
 // ─── Menu ─────────────────────────────────────────────────────────────────────
 
@@ -12,8 +13,9 @@ export class Menu {
   private root: PIXI.Container;
 
   private mainScreen:  PIXI.Container;
-  private avatarScreen: PIXI.Container;
-  private instrScreen: PIXI.Container;
+  private avatarScreen:  PIXI.Container;
+  private instrScreen:   PIXI.Container;
+  private lbScreen:      PIXI.Container;
 
   // Avatar carousel refs
   private carouselRoot!:  PIXI.Container;
@@ -27,7 +29,9 @@ export class Menu {
   private soundBtn!: PIXI.Container;
 
   /** Called when the player clicks START GAME */
-  onStart: () => void = () => {};
+  onStart:    () => void = () => {};
+  /** Called when the player clicks TUTORIAL */
+  onTutorial: () => void = () => {};
 
   constructor(app: PIXI.Application, layer: PIXI.Container) {
     this.app  = app;
@@ -37,8 +41,9 @@ export class Menu {
     this.mainScreen   = this.buildMain();
     this.avatarScreen = this.buildAvatarPicker();
     this.instrScreen  = this.buildInstructions();
+    this.lbScreen     = this.buildLeaderboard();
 
-    this.root.addChild(this.mainScreen, this.avatarScreen, this.instrScreen);
+    this.root.addChild(this.mainScreen, this.avatarScreen, this.instrScreen, this.lbScreen);
     this.showScreen('main');
 
     app.ticker.add((d) => this.tick(d));
@@ -55,12 +60,132 @@ export class Menu {
     this.mainScreen.visible   = name === 'main';
     this.avatarScreen.visible = name === 'avatar';
     this.instrScreen.visible  = name === 'instructions';
-    if (name === 'avatar') this.rebuildCarousel();
+    this.lbScreen.visible     = name === 'leaderboard';
+    if (name === 'avatar')      this.rebuildCarousel();
+    if (name === 'leaderboard') this.rebuildLeaderboard();
   }
 
   // ─────────────────────────────────────────────────────────────────────────
   // MAIN MENU
   // ─────────────────────────────────────────────────────────────────────────
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // MENU BACKGROUND FX  (particles · shooting stars · title aura)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  private buildMenuFX(c: PIXI.Container): void {
+    const W = this.app.screen.width;
+    const H = this.app.screen.height;
+
+    const gfx = new PIXI.Graphics();
+    c.addChild(gfx);
+
+    // ── Particles ──────────────────────────────────────────────────────────
+    const COLORS = [0x00ffcc, 0xcc44ff, 0x4499ff, 0x00aaff, 0xff44dd];
+    type P = { x: number; y: number; vx: number; vy: number; r: number;
+               col: number; baseAlpha: number; phase: number; phaseSpd: number };
+    const particles: P[] = [];
+    for (let i = 0; i < 26; i++) {
+      particles.push({
+        x:        Math.random() * W,
+        y:        Math.random() * H,
+        vx:       (Math.random() - 0.5) * 20,
+        vy:       (Math.random() - 0.5) * 20,
+        r:        1.2 + Math.random() * 2.4,
+        col:      COLORS[Math.floor(Math.random() * COLORS.length)],
+        baseAlpha: 0.25 + Math.random() * 0.40,
+        phase:    Math.random() * Math.PI * 2,
+        phaseSpd: 0.4 + Math.random() * 1.1,
+      });
+    }
+
+    // ── Shooting stars ─────────────────────────────────────────────────────
+    type S = { x: number; y: number; nx: number; ny: number; spd: number;
+               len: number; life: number; maxLife: number };
+    const stars: S[] = [];
+    let starTimer = 2 + Math.random() * 3;
+
+    // ── Ticker ─────────────────────────────────────────────────────────────
+    let t = 0;
+    const tick = (delta: number) => {
+      if (!gfx.parent) { this.app.ticker.remove(tick); return; }
+      // only animate while main screen is visible
+      if (!this.mainScreen.visible) { gfx.visible = false; return; }
+      gfx.visible = true;
+
+      const dt = delta / 60;
+      t += dt;
+      gfx.clear();
+
+      // ── Title aura ──────────────────────────────────────────────────────
+      const ax = W / 2, ay = H * 0.20;
+      const aA = 0.055 + Math.sin(t * 1.3) * 0.030;
+      gfx.beginFill(0x00ffff, aA);
+      gfx.drawEllipse(ax, ay, 240, 58);
+      gfx.endFill();
+      gfx.beginFill(0x4400ff, aA * 0.55);
+      gfx.drawEllipse(ax, ay + 10, 320, 90);
+      gfx.endFill();
+
+      // ── Particles ───────────────────────────────────────────────────────
+      for (const p of particles) {
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.phase += p.phaseSpd * dt;
+        if (p.x < -12) p.x += W + 24;  if (p.x > W + 12) p.x -= W + 24;
+        if (p.y < -12) p.y += H + 24;  if (p.y > H + 12) p.y -= H + 24;
+        const a = p.baseAlpha * (0.55 + Math.sin(p.phase) * 0.45);
+        // soft outer glow
+        gfx.beginFill(p.col, a * 0.14);
+        gfx.drawCircle(p.x, p.y, p.r * 4.0);
+        gfx.endFill();
+        // core dot
+        gfx.beginFill(p.col, a);
+        gfx.drawCircle(p.x, p.y, p.r);
+        gfx.endFill();
+      }
+
+      // ── Shooting stars spawn ────────────────────────────────────────────
+      starTimer -= dt;
+      if (starTimer <= 0) {
+        starTimer = 3.5 + Math.random() * 5;
+        const sx = Math.random() * W * 0.75;
+        const sy = Math.random() * H * 0.35;
+        const ang = 0.22 + Math.random() * 0.55;   // diagonal right-downward
+        const spd = 550 + Math.random() * 500;
+        stars.push({
+          x: sx, y: sy,
+          nx: Math.cos(ang), ny: Math.sin(ang),
+          spd,
+          len: 70 + Math.random() * 130,
+          life: 0,
+          maxLife: 0.28 + Math.random() * 0.22,
+        });
+      }
+
+      // ── Shooting stars draw ─────────────────────────────────────────────
+      for (let i = stars.length - 1; i >= 0; i--) {
+        const s = stars[i];
+        s.x += s.nx * s.spd * dt;
+        s.y += s.ny * s.spd * dt;
+        s.life += dt;
+        if (s.life >= s.maxLife || s.x > W + 60 || s.y > H + 60) {
+          stars.splice(i, 1); continue;
+        }
+        const prog  = s.life / s.maxLife;
+        const alpha = (1 - prog) * 0.85;
+        // white core
+        gfx.lineStyle(1.4, 0xffffff, alpha);
+        gfx.moveTo(s.x, s.y);
+        gfx.lineTo(s.x - s.nx * s.len, s.y - s.ny * s.len);
+        // cyan glow trail
+        gfx.lineStyle(3.5, 0x00ddff, alpha * 0.28);
+        gfx.moveTo(s.x, s.y);
+        gfx.lineTo(s.x - s.nx * s.len * 0.55, s.y - s.ny * s.len * 0.55);
+      }
+    };
+    this.app.ticker.add(tick);
+  }
 
   private buildMain(): PIXI.Container {
     const c = new PIXI.Container();
@@ -71,6 +196,9 @@ export class Menu {
     const bg = new PIXI.Graphics();
     bg.beginFill(0x000008, 0.82); bg.drawRect(0, 0, W, H); bg.endFill();
     c.addChild(bg);
+
+    // Animated background FX (particles, shooting stars, title aura)
+    this.buildMenuFX(c);
 
     // VOID RUSH title
     this.titleGfx = new PIXI.Text('VOID RUSH', {
@@ -110,16 +238,31 @@ export class Menu {
     line.lineTo(W / 2 + 130, H * 0.20 + 98);
     c.addChild(line);
 
-    // Menu items
-    const items: [string, () => void][] = [
+    // Primary menu items (larger, bright)
+    const primary: [string, () => void][] = [
       ['START GAME',    () => this.onStart()],
+    ];
+    primary.forEach(([label, cb], i) => {
+      const btn = this.menuItem(label, cb);
+      btn.position.set(W / 2, H * 0.46 + i * 52);
+      c.addChild(btn);
+    });
+
+    // TUTORIAL — secondary style (smaller, dimmer)
+    const tutBtn = this.menuItemSecondary('▶  TUTORIAL', () => this.onTutorial());
+    tutBtn.position.set(W / 2, H * 0.46 + 52);
+    c.addChild(tutBtn);
+
+    // Secondary items
+    const secondary: [string, () => void][] = [
+      ['LEADERBOARD',   () => this.showScreen('leaderboard')],
       ['CHANGE AVATAR', () => this.showScreen('avatar')],
       ['INSTRUCTIONS',  () => this.showScreen('instructions')],
       ['EXIT',          () => window.location.reload()],
     ];
-    items.forEach(([label, cb], i) => {
+    secondary.forEach(([label, cb], i) => {
       const btn = this.menuItem(label, cb);
-      btn.position.set(W / 2, H * 0.48 + i * 56);
+      btn.position.set(W / 2, H * 0.46 + 114 + i * 50);
       c.addChild(btn);
     });
 
@@ -353,6 +496,20 @@ export class Menu {
     return t;
   }
 
+  private menuItemSecondary(label: string, onClick: () => void): PIXI.Text {
+    const t = new PIXI.Text(label, {
+      fontFamily: 'Orbitron, sans-serif',
+      fontSize: 15, fill: '#3d6e8a',
+    });
+    t.anchor.set(0.5);
+    t.interactive = true;
+    t.cursor = 'pointer';
+    t.on('pointerover', () => { (t.style as any).fill = '#55aacc'; t.scale.set(1.06); });
+    t.on('pointerout',  () => { (t.style as any).fill = '#3d6e8a'; t.scale.set(1);    });
+    t.on('pointerdown', onClick);
+    return t;
+  }
+
   private arrowBtn(symbol: string, onClick: () => void): PIXI.Text {
     const t = new PIXI.Text(symbol, {
       fontFamily: 'Orbitron, sans-serif',
@@ -377,6 +534,127 @@ export class Menu {
     t.anchor.set(0.5);
     t.position.set(x, y);
     return t;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // LEADERBOARD SCREEN
+  // ─────────────────────────────────────────────────────────────────────────
+
+  private lbRowsContainer!: PIXI.Container;
+
+  private buildLeaderboard(): PIXI.Container {
+    const c = new PIXI.Container();
+    const W = this.app.screen.width;
+    const H = this.app.screen.height;
+
+    const bg = new PIXI.Graphics();
+    bg.beginFill(0x000008, 0.95); bg.drawRect(0, 0, W, H); bg.endFill();
+    c.addChild(bg);
+
+    // Title
+    const title = new PIXI.Text('VOID  CONQUERORS', {
+      fontFamily: 'Orbitron, sans-serif', fontSize: 36, fontWeight: 'bold',
+      fill: 0xffd700,
+      dropShadow: true, dropShadowColor: 0xffaa00, dropShadowBlur: 20, dropShadowDistance: 0,
+    });
+    title.anchor.set(0.5); title.position.set(W / 2, H * 0.11);
+    c.addChild(title);
+
+    const sub = new PIXI.Text('ONLY  THOSE  WHO  DEFEATED  LEVEL  15  ARE  LISTED', {
+      fontFamily: 'Orbitron, sans-serif', fontSize: 9, fill: 0x223344, letterSpacing: 2,
+    });
+    sub.anchor.set(0.5); sub.position.set(W / 2, H * 0.11 + 42);
+    c.addChild(sub);
+
+    const divLine = new PIXI.Graphics();
+    divLine.lineStyle(1, 0xffd700, 0.18);
+    divLine.moveTo(W / 2 - 200, H * 0.11 + 58);
+    divLine.lineTo(W / 2 + 200, H * 0.11 + 58);
+    c.addChild(divLine);
+
+    // Rows container (rebuilt dynamically on each open)
+    this.lbRowsContainer = new PIXI.Container();
+    this.lbRowsContainer.position.set(0, H * 0.11 + 68);
+    c.addChild(this.lbRowsContainer);
+
+    // Back button
+    const back = this.menuItem('← BACK', () => this.showScreen('main'));
+    back.position.set(W / 2, H * 0.92);
+    c.addChild(back);
+
+    return c;
+  }
+
+  private rebuildLeaderboard(): void {
+    const W = this.app.screen.width;
+    const H = this.app.screen.height;
+
+    // Clear old rows
+    this.lbRowsContainer.removeChildren();
+
+    const winners = getWinners();
+
+    if (winners.length === 0) {
+      const empty = new PIXI.Text('NO  ONE  HAS  CONQUERED  THE  VOID  YET', {
+        fontFamily: 'Orbitron, sans-serif', fontSize: 15, fill: 0x223344,
+        letterSpacing: 2, align: 'center',
+      });
+      empty.anchor.set(0.5); empty.position.set(W / 2, H * 0.32);
+      this.lbRowsContainer.addChild(empty);
+
+      const hint = new PIXI.Text('Be the first to defeat all 15 levels.', {
+        fontFamily: 'Orbitron, sans-serif', fontSize: 11, fill: 0x1a2a33,
+      });
+      hint.anchor.set(0.5); hint.position.set(W / 2, H * 0.32 + 34);
+      this.lbRowsContainer.addChild(hint);
+      return;
+    }
+
+    const RANK_COLORS = [0xffd700, 0xcccccc, 0xcd7f32]; // gold/silver/bronze
+    const ROW_H = 44;
+    const startY = 10;
+
+    winners.forEach((w, i) => {
+      const rankCol = i < 3 ? RANK_COLORS[i] : 0x445566;
+      const rowY    = startY + i * ROW_H;
+
+      // Row bg stripe (alternating)
+      const rowBg = new PIXI.Graphics();
+      rowBg.beginFill(i % 2 === 0 ? 0x001122 : 0x000d18, 0.5);
+      rowBg.drawRect(W * 0.08, rowY + 2, W * 0.84, ROW_H - 4);
+      rowBg.endFill();
+      this.lbRowsContainer.addChild(rowBg);
+
+      // Rank number
+      const rankTxt = new PIXI.Text(`#${i + 1}`, {
+        fontFamily: 'Orbitron, sans-serif', fontSize: 16, fontWeight: 'bold',
+        fill: rankCol,
+      });
+      rankTxt.anchor.set(0, 0.5); rankTxt.position.set(W * 0.10, rowY + ROW_H / 2);
+      this.lbRowsContainer.addChild(rankTxt);
+
+      // Name
+      const nameTxt = new PIXI.Text(w.name.toUpperCase(), {
+        fontFamily: 'Orbitron, sans-serif', fontSize: 15, fontWeight: 'bold',
+        fill: i < 3 ? rankCol : 0x88aacc,
+      });
+      nameTxt.anchor.set(0, 0.5); nameTxt.position.set(W * 0.20, rowY + ROW_H / 2);
+      this.lbRowsContainer.addChild(nameTxt);
+
+      // Score
+      const scoreTxt = new PIXI.Text(`${w.score.toLocaleString()}  pts`, {
+        fontFamily: 'Orbitron, sans-serif', fontSize: 14, fill: 0x00ffcc,
+      });
+      scoreTxt.anchor.set(1, 0.5); scoreTxt.position.set(W * 0.72, rowY + ROW_H / 2);
+      this.lbRowsContainer.addChild(scoreTxt);
+
+      // Date
+      const dateTxt = new PIXI.Text(w.date, {
+        fontFamily: 'Orbitron, sans-serif', fontSize: 10, fill: 0x334455,
+      });
+      dateTxt.anchor.set(1, 0.5); dateTxt.position.set(W * 0.90, rowY + ROW_H / 2);
+      this.lbRowsContainer.addChild(dateTxt);
+    });
   }
 
   // ── Sound icon ────────────────────────────────────────────────────────────

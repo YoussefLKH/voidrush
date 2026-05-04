@@ -276,11 +276,14 @@ export class EnemyManager {
   }
 
   setLevel(level: number): void {
-    this.levelSpeedMult = 1 + (level - 1) * 0.15;
-    this.spawnInterval  = Math.max(0.4, 2.0 - (level - 1) * 0.13);
+    // Cap speed at level ~13 equivalent — harder but still beatable
+    this.levelSpeedMult = Math.min(2.4, 1 + (level - 1) * 0.15);
+    // Never spawn faster than once every 0.55s to avoid overwhelming density
+    this.spawnInterval  = Math.max(0.55, 2.0 - (level - 1) * 0.13);
   }
 
   setPaused(p: boolean): void { this.paused = p; }
+  isPaused():  boolean        { return this.paused; }
 
   /** Clear enemies without resetting level settings. */
   clearAll(): void {
@@ -361,6 +364,7 @@ export class EnemyManager {
     const cfg = CONFIGS[type];
     let x: number, y: number;
     const pad = cfg.radius + 20;
+    const MIN_DIST = 130; // never spawn within 130 px of the player
 
     if (type === 'bomb') {
       // Spawn from edge, drift slowly inward
@@ -385,6 +389,8 @@ export class EnemyManager {
         default: x = W + pad;          y = Math.random() * H; break;
       }
       const dx = px - x, dy = py - y, len = Math.hypot(dx, dy) || 1;
+      // Skip if spawned too close to player (avoid instant-hits)
+      if (Math.hypot(dx, dy) < MIN_DIST) return;
       this._enemies.push(new Enemy(type, x, y, (dx / len) * cfg.speed, (dy / len) * cfg.speed,
         this.layer, settings.speedMult, this.levelSpeedMult));
     }

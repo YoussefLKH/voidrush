@@ -29,9 +29,16 @@ export class HUD {
   // Pause menu (created/destroyed on demand)
   private pauseRoot:       PIXI.Container | null = null;
   private pauseSoundLabel: PIXI.Text      | null = null;
+  private pauseMusicLabel: PIXI.Text      | null = null;
+
+  // Level fraction label (below the big level number, top-left)
+  private levelFractionText!: PIXI.Text;
 
   // Victory screen (created/destroyed on demand)
   private victoryRoot:     PIXI.Container | null = null;
+
+  // Name entry HTML overlay
+  private nameEntryEl:    HTMLElement | null = null;
 
   // Level-up flash
   private levelUpContainer: PIXI.Container;
@@ -78,6 +85,14 @@ export class HUD {
     });
     this.levelNum.position.set(18, 22);
     layer.addChild(this.levelNum);
+
+    // Small "/ 15" fraction below the big number — left-aligned, never overlaps hearts
+    this.levelFractionText = new PIXI.Text('/ 15', {
+      fontFamily: 'Orbitron, sans-serif', fontSize: 10, fill: 0xffcc00,
+    });
+    this.levelFractionText.alpha = 0.50;
+    this.levelFractionText.position.set(18, 53);
+    layer.addChild(this.levelFractionText);
 
     // ── Hearts (top-center) ───────────────────────────────────────────────
     this.heartContainers = [];
@@ -590,7 +605,10 @@ export class HUD {
     this.scoreText.position.x = this.app.screen.width - 18;
   }
 
-  setLevel(n: number): void { this.levelNum.text = String(n); }
+  setLevel(n: number): void {
+    this.levelNum.text          = String(n);
+    this.levelFractionText.text = `/ 15`;
+  }
 
   // ── Level-up banner ───────────────────────────────────────────────────────
 
@@ -618,6 +636,26 @@ export class HUD {
     this.finalPercent.text = `${pct}%  OF  THE  VOID  CONQUERED`;
     this.goContainer.visible = true;
     this.goContainer.alpha   = 0;
+
+    // Red vignette flash on death
+    const W = this.app.screen.width, H = this.app.screen.height;
+    const vig = new PIXI.Graphics();
+    // Draw as a thick red border glow
+    for (let i = 0; i < 5; i++) {
+      const pad = i * 18;
+      vig.lineStyle(22, 0xff0000, 0.12 - i * 0.018);
+      vig.drawRect(pad, pad, W - pad * 2, H - pad * 2);
+    }
+    vig.alpha = 0;
+    this.layer.addChild(vig);
+    let vigT = 0;
+    const vigAnim = (delta: number) => {
+      vigT += delta / 60;
+      vig.alpha = vigT < 0.15 ? vigT / 0.15 : Math.max(0, 1 - (vigT - 0.15) / 0.55);
+      if (vigT >= 0.7) { if (vig.parent) this.layer.removeChild(vig); vig.destroy(); this.app.ticker.remove(vigAnim); }
+    };
+    this.app.ticker.add(vigAnim);
+
     const fade = (delta: number) => {
       this.goContainer.alpha += (delta / 60) * 3;
       if (this.goContainer.alpha >= 1) { this.goContainer.alpha = 1; this.app.ticker.remove(fade); }
@@ -668,36 +706,47 @@ export class HUD {
     const scoreText = new PIXI.Text(`FINAL  SCORE   ${score}`, {
       fontFamily: 'Orbitron, sans-serif', fontSize: 26, fill: 0xffffff,
     });
-    scoreText.anchor.set(0.5); scoreText.position.set(W / 2, H / 2 + 12);
+    scoreText.anchor.set(0.5); scoreText.position.set(W / 2, H / 2 + 8);
     root.addChild(scoreText);
+
+    // Rank
+    const rank = new PIXI.Text('RANK:  VOID  CONQUEROR', {
+      fontFamily: 'Orbitron, sans-serif', fontSize: 14, fontWeight: 'bold',
+      fill: 0xffd700, letterSpacing: 3,
+      dropShadow: true, dropShadowColor: 0xffaa00, dropShadowBlur: 10, dropShadowDistance: 0,
+    });
+    rank.anchor.set(0.5); rank.position.set(W / 2, H / 2 + 44);
+    root.addChild(rank);
 
     // Level cleared
     const cleared = new PIXI.Text('LEVEL  15  CLEARED', {
-      fontFamily: 'Orbitron, sans-serif', fontSize: 15, fill: 0xffcc00, letterSpacing: 2,
+      fontFamily: 'Orbitron, sans-serif', fontSize: 14, fill: 0xffcc00, letterSpacing: 2,
     });
-    cleared.anchor.set(0.5); cleared.position.set(W / 2, H / 2 + 52);
+    cleared.anchor.set(0.5); cleared.position.set(W / 2, H / 2 + 74);
     root.addChild(cleared);
 
     // 100%
     const pct = new PIXI.Text('100%  OF  THE  VOID  CONQUERED', {
-      fontFamily: 'Orbitron, sans-serif', fontSize: 13, fill: 0x00ddff, letterSpacing: 1,
+      fontFamily: 'Orbitron, sans-serif', fontSize: 12, fill: 0x00ddff, letterSpacing: 1,
     });
-    pct.anchor.set(0.5); pct.position.set(W / 2, H / 2 + 84);
+    pct.anchor.set(0.5); pct.position.set(W / 2, H / 2 + 100);
     root.addChild(pct);
 
     // Returning hint
-    const goSub = new PIXI.Text('returning to menu...', {
-      fontFamily: 'Orbitron, sans-serif', fontSize: 12, fill: 0x333344,
+    const goSub = new PIXI.Text('entering leaderboard...', {
+      fontFamily: 'Orbitron, sans-serif', fontSize: 11, fill: 0x333344,
     });
-    goSub.anchor.set(0.5); goSub.position.set(W / 2, H / 2 + 118);
+    goSub.anchor.set(0.5); goSub.position.set(W / 2, H / 2 + 130);
     root.addChild(goSub);
 
-    // Press any key
+    // Press any key (hidden until name entry done — controlled by game.ts)
     const anyKey = new PIXI.Text('PRESS  ANY  KEY  TO  CONTINUE', {
       fontFamily: 'Orbitron, sans-serif', fontSize: 11, fill: 0xffcc00, letterSpacing: 3,
     });
-    anyKey.anchor.set(0.5); anyKey.position.set(W / 2, H / 2 + 148);
+    anyKey.anchor.set(0.5); anyKey.position.set(W / 2, H / 2 + 155);
+    anyKey.alpha = 0; // hidden by default; game.ts makes it visible after name entry
     root.addChild(anyKey);
+    (root as any).__anyKey = anyKey; // expose for game.ts to reveal after name entry
 
     // Fade in
     root.alpha = 0;
@@ -735,12 +784,14 @@ export class HUD {
   // ── Pause menu ────────────────────────────────────────────────────────────
 
   showPauseMenu(
-    isMuted:       boolean,
-    score:         number,
-    level:         number,
-    onResume:      () => void,
-    onToggleSound: () => void,
-    onQuit:        () => void,
+    isMuted:        boolean,
+    isMusicMuted:   boolean,
+    score:          number,
+    level:          number,
+    onResume:       () => void,
+    onToggleSound:  () => void,
+    onToggleMusic:  () => void,
+    onQuit:         () => void,
   ): void {
     if (this.pauseRoot) return;
 
@@ -754,8 +805,8 @@ export class HUD {
     overlay.beginFill(0x000008, 0.80); overlay.drawRect(0, 0, W, H); overlay.endFill();
     root.addChild(overlay);
 
-    // Panel
-    const pW = 360, pH = 320;
+    // Panel — taller to fit extra MUSIC button
+    const pW = 360, pH = 380;
     const panel = new PIXI.Graphics();
     panel.lineStyle(1, 0x00ffcc, 0.28);
     panel.beginFill(0x000d18, 0.96);
@@ -768,21 +819,21 @@ export class HUD {
       fontFamily: 'Orbitron, sans-serif', fontSize: 38, fontWeight: '900', fill: 0x00ffcc,
       dropShadow: true, dropShadowColor: 0x00ffcc, dropShadowBlur: 22, dropShadowDistance: 0,
     });
-    title.anchor.set(0.5); title.position.set(W / 2, H / 2 - 118);
+    title.anchor.set(0.5); title.position.set(W / 2, H / 2 - 155);
     root.addChild(title);
 
     // Score / level info
     const info = new PIXI.Text(`SCORE  ${score}   ·   LEVEL  ${level}`, {
       fontFamily: 'Orbitron, sans-serif', fontSize: 11, fill: 0x335544, letterSpacing: 2,
     });
-    info.anchor.set(0.5); info.position.set(W / 2, H / 2 - 76);
+    info.anchor.set(0.5); info.position.set(W / 2, H / 2 - 113);
     root.addChild(info);
 
     // Divider
     const div = new PIXI.Graphics();
     div.lineStyle(1, 0x00ffcc, 0.18);
-    div.moveTo(W / 2 - 130, H / 2 - 58);
-    div.lineTo(W / 2 + 130, H / 2 - 58);
+    div.moveTo(W / 2 - 130, H / 2 - 95);
+    div.lineTo(W / 2 + 130, H / 2 - 95);
     root.addChild(div);
 
     // Button helper
@@ -799,27 +850,39 @@ export class HUD {
       return t;
     };
 
-    makeBtn('RESUME MISSION', H / 2 - 22, onResume);
+    makeBtn('RESUME MISSION', H / 2 - 58, onResume);
 
     this.pauseSoundLabel = makeBtn(
-      isMuted ? 'SOUND:  OFF' : 'SOUND:  ON',
-      H / 2 + 34,
+      isMuted ? 'SFX:  OFF' : 'SFX:  ON',
+      H / 2 + 2,
       onToggleSound,
     );
 
-    makeBtn('ABANDON SHIP', H / 2 + 90, onQuit);
+    this.pauseMusicLabel = makeBtn(
+      isMusicMuted ? 'MUSIC:  OFF' : 'MUSIC:  ON',
+      H / 2 + 58,
+      onToggleMusic,
+    );
+
+    makeBtn('ABANDON SHIP', H / 2 + 120, onQuit);
 
     // ESC hint
     const hint = new PIXI.Text('ESC  ·  resume', {
       fontFamily: 'Orbitron, sans-serif', fontSize: 10, fill: 0x1e2e3e, letterSpacing: 4,
     });
-    hint.anchor.set(0.5); hint.position.set(W / 2, H / 2 + 138);
+    hint.anchor.set(0.5); hint.position.set(W / 2, H / 2 + 170);
     root.addChild(hint);
   }
 
   updatePauseSoundLabel(isMuted: boolean): void {
     if (this.pauseSoundLabel) {
-      this.pauseSoundLabel.text = isMuted ? 'SOUND:  OFF' : 'SOUND:  ON';
+      this.pauseSoundLabel.text = isMuted ? 'SFX:  OFF' : 'SFX:  ON';
+    }
+  }
+
+  updatePauseMusicLabel(isMusicMuted: boolean): void {
+    if (this.pauseMusicLabel) {
+      this.pauseMusicLabel.text = isMusicMuted ? 'MUSIC:  OFF' : 'MUSIC:  ON';
     }
   }
 
@@ -827,8 +890,148 @@ export class HUD {
     if (this.pauseRoot) {
       this.layer.removeChild(this.pauseRoot);
       this.pauseRoot.destroy({ children: true });
-      this.pauseRoot = null;
+      this.pauseRoot       = null;
       this.pauseSoundLabel = null;
+      this.pauseMusicLabel = null;
+    }
+  }
+
+  // ── Name entry (post-victory leaderboard) ─────────────────────────────────
+
+  showNameEntry(score: number, onSubmit: (name: string | null) => void): void {
+    if (this.nameEntryEl) return;
+
+    const wrap = document.createElement('div');
+    wrap.id = 'vr-name-entry';
+    Object.assign(wrap.style, {
+      position:        'fixed',
+      inset:           '0',
+      display:         'flex',
+      flexDirection:   'column',
+      alignItems:      'center',
+      justifyContent:  'center',
+      background:      'rgba(0,0,5,0.82)',
+      zIndex:          '9999',
+      fontFamily:      '"Orbitron", sans-serif',
+      gap:             '14px',
+    });
+
+    const title = document.createElement('div');
+    title.textContent = 'VOID  CONQUERED!';
+    Object.assign(title.style, {
+      fontSize: '32px', fontWeight: '900',
+      color: '#ffd700',
+      textShadow: '0 0 24px #ffaa00, 0 0 48px #ff8800',
+      letterSpacing: '4px',
+    });
+
+    const sub = document.createElement('div');
+    sub.textContent = 'ENTER YOUR NAME FOR THE LEADERBOARD';
+    Object.assign(sub.style, {
+      fontSize: '11px', color: '#446688', letterSpacing: '3px',
+    });
+
+    const scoreDiv = document.createElement('div');
+    scoreDiv.textContent = `FINAL SCORE  ${score}`;
+    Object.assign(scoreDiv.style, {
+      fontSize: '14px', color: '#aabbcc', letterSpacing: '2px', marginBottom: '4px',
+    });
+
+    const input = document.createElement('input');
+    input.type        = 'text';
+    input.maxLength   = 16;
+    input.placeholder = 'ENTER NAME';
+    input.autocomplete = 'off';
+    Object.assign(input.style, {
+      background:    '#00060f',
+      border:        '1.5px solid #00ccff',
+      borderRadius:  '4px',
+      color:         '#00ffcc',
+      fontFamily:    '"Orbitron", sans-serif',
+      fontSize:      '20px',
+      fontWeight:    'bold',
+      letterSpacing: '3px',
+      padding:       '10px 18px',
+      textAlign:     'center',
+      outline:       'none',
+      width:         '280px',
+      caretColor:    '#00ffcc',
+    });
+
+    const warn = document.createElement('div');
+    warn.style.fontSize  = '11px';
+    warn.style.color     = '#ff3355';
+    warn.style.minHeight = '18px';
+    warn.style.letterSpacing = '2px';
+
+    const confirmBtn = document.createElement('button');
+    confirmBtn.textContent = 'CONFIRM';
+    Object.assign(confirmBtn.style, {
+      background:    'transparent',
+      border:        '1.5px solid #00ffcc',
+      borderRadius:  '4px',
+      color:         '#00ffcc',
+      fontFamily:    '"Orbitron", sans-serif',
+      fontSize:      '14px',
+      letterSpacing: '3px',
+      padding:       '8px 28px',
+      cursor:        'pointer',
+      marginTop:     '4px',
+    });
+
+    const skipBtn = document.createElement('button');
+    skipBtn.textContent = 'SKIP';
+    Object.assign(skipBtn.style, {
+      background:    'transparent',
+      border:        'none',
+      color:         '#334455',
+      fontFamily:    '"Orbitron", sans-serif',
+      fontSize:      '10px',
+      letterSpacing: '2px',
+      cursor:        'pointer',
+      marginTop:     '2px',
+    });
+
+    // Shared submit logic
+    const PROFANITY = ['fuck','shit','bitch','cunt','dick','cock','nigger','nigga','faggot','fag','pussy','asshole'];
+    const trySubmit = () => {
+      const val = input.value.trim();
+      if (!val) { warn.textContent = 'ENTER A NAME FIRST'; return; }
+      const lower = val.toLowerCase().replace(/[^a-z]/g, '');
+      if (PROFANITY.some((w) => lower.includes(w))) {
+        input.value     = '';
+        warn.textContent = 'NAME NOT ALLOWED';
+        setTimeout(() => { warn.textContent = ''; }, 1500);
+        return;
+      }
+      onSubmit(val);
+    };
+
+    confirmBtn.addEventListener('click', trySubmit);
+    skipBtn.addEventListener('click',    () => onSubmit(null));
+    input.addEventListener('keydown',    (e) => {
+      e.stopPropagation(); // prevent game keys from firing
+      if (e.key === 'Enter') trySubmit();
+    });
+
+    wrap.append(title, sub, scoreDiv, input, warn, confirmBtn, skipBtn);
+    document.body.appendChild(wrap);
+    this.nameEntryEl = wrap;
+    setTimeout(() => input.focus(), 50);
+  }
+
+  hideNameEntry(): void {
+    if (this.nameEntryEl) {
+      document.body.removeChild(this.nameEntryEl);
+      this.nameEntryEl = null;
+    }
+    // Reveal the "press any key" on the victory screen
+    if (this.victoryRoot) {
+      const anyKey = (this.victoryRoot as any).__anyKey as PIXI.Text | undefined;
+      if (anyKey) {
+        anyKey.alpha = 1;
+        (this.victoryRoot as any).__goSub && ((this.victoryRoot as any).__goSub.text = 'returning to menu...');
+      }
     }
   }
 }
